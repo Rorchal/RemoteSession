@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模拟会话</title>
+<style>
+:root {
+  --bg: #f5f6f8; --panel: #fff; --text: #1d2129; --muted: #86909c; --border: #e5e6eb;
+  --primary: #3363e8; --primary-hover: #2a55cf; --primary-soft: #ebf0fe; --primary-ink: #fff;
+  --ok: #10893e; --ok-soft: #e8f7ee; --warn: #b26a00; --warn-soft: #fff4e0;
+  --danger: #d4380d; --danger-soft: #fdeee9; --code: #f2f3f5;
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 2px 8px rgba(0,0,0,.05);
+  --radius: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101216; --panel: #181b21; --text: #e5e7eb; --muted: #8a919c; --border: #2a2f38;
+    --primary: #5b82f5; --primary-hover: #6d90f7; --primary-soft: #1d2640;
+    --ok: #4cc27a; --ok-soft: #15291d; --warn: #f0a63a; --warn-soft: #2d2412;
+    --danger: #f06a48; --danger-soft: #331a14; --code: #22262e; --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.mono { font-family: ui-monospace, Consolas, "Cascadia Mono", monospace; font-size: 13px; }
+
+/* 按钮与表单 */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+  cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
+}
+.btn:hover { border-color: var(--muted); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.btn.primary:hover:not(:disabled) { background: var(--primary-hover); }
+.btn.danger { color: var(--danger); }
+.btn.danger:hover { border-color: var(--danger); background: var(--danger-soft); }
+.btn.small { height: 28px; padding: 0 10px; font-size: 13px; }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--code); }
+.btn.link { height: auto; padding: 0; border: 0; background: none; color: var(--primary); font-size: 13px; }
+.btn.link:hover { text-decoration: underline; }
+.field { display: block; margin-bottom: 14px; }
+.field > span { display: block; margin-bottom: 4px; font-size: 13px; color: var(--muted); }
+.field small { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.input {
+  width: 100%; height: 38px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); outline: none; transition: border-color .15s, box-shadow .15s;
+}
+.input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.input[readonly] { background: var(--code); color: var(--muted); }
+.check { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; cursor: pointer; }
+.error { min-height: 20px; margin: -4px 0 10px; color: var(--danger); font-size: 13px; }
+.tag {
+  display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12px; line-height: 20px;
+  background: var(--code); color: var(--muted); vertical-align: 1px;
+}
+.tag.admin { background: var(--primary-soft); color: var(--primary); }
+.tag.warn { background: var(--warn-soft); color: var(--warn); }
+.tag.ok { background: var(--ok-soft); color: var(--ok); }
+.tag.off { background: var(--danger-soft); color: var(--danger); }
+
+/* 登录 */
+#login-view { min-height: 100%; display: grid; place-items: center; padding: 24px 16px; }
+.login-card {
+  width: 100%; max-width: 360px; padding: 32px 28px 24px; border: 1px solid var(--border);
+  border-radius: 16px; background: var(--panel); box-shadow: var(--shadow);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 17px; }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  background: var(--primary); color: #fff; font-size: 15px;
+}
+.login-card .brand { justify-content: center; font-size: 20px; margin-bottom: 4px; }
+.login-card .sub { text-align: center; color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+.login-card .btn.primary { width: 100%; height: 40px; justify-content: center; }
+
+/* 主界面 */
+#app-view { height: 100%; display: flex; flex-direction: column; }
+.topbar {
+  flex: none; display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px;
+  border-bottom: 1px solid var(--border); background: var(--panel);
+}
+.topbar .spacer { flex: 1; }
+.nav { display: flex; gap: 4px; margin-left: 12px; }
+.nav .btn.active { background: var(--primary-soft); color: var(--primary); border-color: transparent; }
+.who { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.scroll { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* 会话 */
+.chat { max-width: 840px; margin: 0 auto; padding: 24px 16px 8px; }
+.turn { margin-bottom: 26px; }
+.msg-me { display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 12px; }
+.bubble {
+  max-width: 82%; padding: 10px 14px; border-radius: 14px 14px 4px 14px;
+  background: var(--primary); color: var(--primary-ink); white-space: pre-wrap; word-break: break-word;
+}
+.meta { margin-top: 4px; font-size: 12px; color: var(--muted); }
+.card {
+  max-width: 100%; padding: 14px 18px; border: 1px solid var(--border); border-radius: 4px 14px 14px 14px;
+  background: var(--panel); box-shadow: var(--shadow);
+}
+.card.cancelled { color: var(--muted); font-size: 14px; padding: 10px 14px; box-shadow: none; background: transparent; border-style: dashed; }
+.card-foot { display: flex; align-items: center; gap: 14px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.card-foot .grow { flex: 1; }
+.waiting { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.dots { display: inline-flex; gap: 4px; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); animation: blink 1.2s infinite both; }
+.dots i:nth-child(2) { animation-delay: .2s; }
+.dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+.watch { margin-top: 6px; font-size: 13px; color: var(--muted); word-break: break-all; }
+.watch code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; background: var(--code); padding: 1px 6px; border-radius: 4px; }
+.warn-line { margin-top: 6px; font-size: 13px; color: var(--warn); }
+.empty { text-align: center; color: var(--muted); padding: 72px 16px; }
+.empty .big { font-size: 18px; color: var(--text); margin-bottom: 6px; }
+.empty code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; background: var(--code); padding: 2px 8px; border-radius: 4px; word-break: break-all; }
+
+/* 回答里的 markdown */
+.md { word-break: break-word; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: .55em 0; }
+.md h3, .md h4, .md h5, .md h6 { margin: 1em 0 .4em; line-height: 1.4; }
+.md h3 { font-size: 1.15em; } .md h4 { font-size: 1.05em; } .md h5, .md h6 { font-size: 1em; }
+.md ul, .md ol { margin: .4em 0; padding-left: 1.6em; }
+.md li { margin: .15em 0; }
+.md code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+.md pre { background: var(--code); padding: 12px 14px; border-radius: 8px; overflow-x: auto; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { margin: .5em 0; padding: 2px 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+.md a { color: var(--primary); }
+
+/* 输入框 */
+.composer-wrap { flex: none; padding: 8px 16px 14px; background: linear-gradient(to bottom, transparent, var(--bg) 30%); }
+.composer {
+  max-width: 840px; margin: 0 auto; display: flex; align-items: flex-end; gap: 10px; padding: 10px 10px 10px 14px;
+  border: 1px solid var(--border); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow);
+}
+.composer:focus-within { border-color: var(--primary); }
+.composer textarea {
+  flex: 1; min-height: 26px; max-height: 220px; padding: 3px 0; border: 0; outline: none; resize: none; background: transparent;
+}
+.composer .btn { height: 34px; }
+.composer-hint { max-width: 840px; margin: 6px auto 0; font-size: 12px; color: var(--muted); padding: 0 4px; word-break: break-all; }
+.composer-hint.waiting-hint { color: var(--warn); }
+
+/* 用户管理 */
+.admin-page { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+.admin-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.admin-head h2 { margin: 0; font-size: 18px; flex: 1; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { font-weight: 500; color: var(--muted); font-size: 13px; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td.dir { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+td.ops { text-align: right; }
+td.ops .btn + .btn { margin-left: 6px; }
+
+/* 弹窗 */
+dialog {
+  width: min(460px, calc(100% - 32px)); padding: 0; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--panel); color: var(--text); box-shadow: 0 12px 40px rgba(0,0,0,.18);
+}
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog form { padding: 22px 24px 20px; }
+dialog h3 { margin: 0 0 18px; font-size: 17px; }
+dialog .note { margin: -8px 0 16px; padding: 8px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }
+.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+
+/* 提示 */
+#toasts { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+.toast { padding: 8px 16px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.15); animation: pop .2s ease-out; max-width: calc(100vw - 32px); }
+.toast.error { background: var(--danger); color: #fff; }
+.toast.ok { background: var(--ok); color: #fff; }
+@keyframes pop { from { opacity: 0; transform: translateY(-6px); } }
+
+@media (max-width: 640px) {
+  .topbar { gap: 6px; padding: 0 10px; }
+  .topbar .brand span:last-child, .who .name-text { display: none; }
+  .nav { margin-left: 0; }
+  .bubble { max-width: 92%; }
+  .btn.hide-sm { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- 登录 -->
+<div id="login-view" class="hidden">
+  <form class="login-card" id="login-form" autocomplete="on">
+    <div class="brand"><span class="brand-mark">问</span><span>模拟会话</span></div>
+    <p class="sub">登录后提问，回答完毕会自动返回</p>
+    <label class="field"><span>用户名</span><input class="input" name="username" autocomplete="username" required autofocus></label>
+    <label class="field"><span>密码</span><input class="input" name="password" type="password" autocomplete="current-password" required></label>
+    <div class="error" id="login-error"></div>
+    <button class="btn primary" type="submit">登录</button>
+  </form>
+</div>
+
+<!-- 主界面 -->
+<div id="app-view" class="hidden">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">问</span><span>模拟会话</span></div>
+    <nav class="nav">
+      <button class="btn ghost small active" data-view="chat">会话</button>
+      <button class="btn ghost small admin-only" data-view="admin">用户管理</button>
+    </nav>
+    <div class="spacer"></div>
+    <div class="who"><span class="name-text" id="who-name"></span><span class="tag" id="who-role"></span></div>
+    <button class="btn small" id="pw-btn"><span>修改密码</span></button>
+    <button class="btn small" id="logout-btn">退出</button>
+  </header>
+
+  <section class="view" id="chat-view">
+    <div class="scroll" id="chat-scroll"><div class="chat" id="chat-list"></div></div>
+    <div class="composer-wrap">
+      <div class="composer">
+        <textarea id="q-input" rows="1" placeholder="输入问题，Enter 发送，Shift + Enter 换行"></textarea>
+        <button class="btn primary" id="send-btn">发送</button>
+      </div>
+      <div class="composer-hint" id="composer-hint"></div>
+    </div>
+  </section>
+
+  <section class="view hidden" id="admin-view">
+    <div class="scroll">
+      <div class="admin-page">
+        <div class="admin-head">
+          <h2>用户管理</h2>
+          <button class="btn" id="reload-users-btn">刷新</button>
+          <button class="btn primary" id="add-user-btn">新建用户</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>用户名</th><th>角色</th><th>md 目录</th><th>提问</th><th>状态</th><th>创建时间</th><th></th></tr></thead>
+            <tbody id="user-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- 新建 / 编辑用户 -->
+<dialog id="user-dialog">
+  <form id="user-form" autocomplete="off">
+    <h3 id="user-dialog-title">新建用户</h3>
+    <label class="field"><span>用户名</span><input class="input" name="username" maxlength="32" required></label>
+    <label class="field"><span id="user-pw-label">密码</span><input class="input" name="password" type="password" autocomplete="new-password"></label>
+    <label class="field"><span>角色</span>
+      <select class="input" name="role"><option value="user">普通用户</option><option value="admin">管理员</option></select>
+    </label>
+    <label class="field"><span>md 目录</span><input class="input mono" name="md_dir" required>
+      <small>这个用户的问题会依次生成 1.md、2.md、3.md… 到这个目录</small></label>
+    <label class="check"><input type="checkbox" name="enabled" checked> 启用账号</label>
+    <div class="error" id="user-error"></div>
+    <div class="actions">
+      <button type="button" class="btn" data-close>取消</button>
+      <button type="submit" class="btn primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 修改密码 -->
+<dialog id="pw-dialog">
+  <form id="pw-form" autocomplete="off">
+    <h3>修改密码</h3>
+    <div class="note hidden" id="pw-force-note">你正在使用初始密码，请先修改密码再继续使用。</div>
+    <label class="field"><span>原密码</span><input class="input" name="old_password" type="password" autocomplete="current-password" required></label>
+    <label class="field"><span>新密码（至少 6 位）</span><input class="input" name="new_password" type="password" autocomplete="new-password" required minlength="6"></label>
+    <label class="field"><span>确认新密码</span><input class="input" name="confirm" type="password" autocomplete="new-password" required></label>
+    <div class="error" id="pw-error"></div>
+    <div class="actions">
+      <button type="button" class="btn" data-close id="pw-cancel">取消</button>
+      <button type="submit" class="btn primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toasts"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const state = { user: null, defaultDir: '', questions: [], users: [], view: 'chat' };
+const baseTitle = document.title;
+
+// ------------------------------------------------------------ 请求
+async function api(method, url, body) {
+  const opt = { method, headers: {}, credentials: 'same-origin' };
+  if (body !== undefined) {
+    opt.headers['Content-Type'] = 'application/json';
+    opt.body = JSON.stringify(body);
+  }
+  let res;
+  try { res = await fetch(url, opt); }
+  catch { const e = new Error('无法连接服务器'); e.status = 0; throw e; }
+  let data = {};
+  try { data = await res.json(); } catch {}
+  if (!res.ok) {
+    const e = new Error(data.error || `请求失败（${res.status}）`);
+    e.status = res.status;
+    if (res.status === 401 && state.user && url !== '/api/login') {
+      state.user = null;
+      showLogin();
+      toast('登录已失效，请重新登录', 'error');
+    }
+    throw e;
+  }
+  return data;
+}
+
+function toast(msg, type = '') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.remove(), type === 'error' ? 4000 : 2500);
+}
+
+// ------------------------------------------------------------ 简易 markdown
+function inlineMd(s) {
+  return s
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+function renderMd(src) {
+  const lines = String(src).replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let para = [], list = null, i = 0;
+  const flushPara = () => { if (para.length) { out.push('<p>' + para.map(l => inlineMd(esc(l))).join('<br>') + '</p>'); para = []; } };
+  const flushList = () => {
+    if (!list) return;
+    const start = list.type === 'ol' && list.start !== 1 ? ` start="${list.start}"` : '';
+    out.push(`<${list.type}${start}>` + list.items.map(t => '<li>' + inlineMd(esc(t)) + '</li>').join('') + `</${list.type}>`);
+    list = null;
+  };
+  const flush = () => { flushPara(); flushList(); };
+  while (i < lines.length) {
+    const line = lines[i];
+    let m;
+    if (/^\s*```/.test(line)) {
+      flush();
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out.push('<pre><code>' + esc(buf.join('\n')) + '</code></pre>');
+      continue;
+    }
+    if (!line.trim()) { flush(); }
+    else if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { flush(); const lv = Math.min(m[1].length + 2, 6); out.push(`<h${lv}>${inlineMd(esc(m[2]))}</h${lv}>`); }
+    else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flush(); out.push('<hr>'); }
+    else if ((m = line.match(/^\s*>\s?(.*)$/))) { flush(); out.push('<blockquote>' + inlineMd(esc(m[1])) + '</blockquote>'); }
+    else if ((m = line.match(/^\s*[-*+]\s+(.*)$/))) {
+      flushPara();
+      if (!list || list.type !== 'ul') { flushList(); list = { type: 'ul', items: [] }; }
+      list.items.push(m[1]);
+    }
+    else if ((m = line.match(/^\s*(\d+)[.)]\s+(.*)$/))) {
+      flushPara();
+      if (!list || list.type !== 'ol') { flushList(); list = { type: 'ol', start: +m[1], items: [] }; }
+      list.items.push(m[2]);
+    }
+    else { flushList(); para.push(line); }
+    i++;
+  }
+  flush();
+  return out.join('');
+}
+
+// ------------------------------------------------------------ 登录 / 退出
+function showLogin() {
+  $('#app-view').classList.add('hidden');
+  $('#login-view').classList.remove('hidden');
+  $$('dialog[open]').forEach(d => d.close());
+  document.title = baseTitle;
+  setTimeout(() => $('#login-form [name=username]').focus(), 0);
+}
+
+function onLogin(data) {
+  state.user = data.user;
+  state.defaultDir = data.default_dir;
+  state.questions = [];
+  $('#login-view').classList.add('hidden');
+  $('#app-view').classList.remove('hidden');
+  $('#who-name').textContent = state.user.username;
+  const roleTag = $('#who-role');
+  roleTag.textContent = state.user.role === 'admin' ? '管理员' : '用户';
+  roleTag.className = 'tag' + (state.user.role === 'admin' ? ' admin' : '');
+  $$('.admin-only').forEach(el => el.classList.toggle('hidden', state.user.role !== 'admin'));
+  switchView('chat');
+  renderChat();
+  loadQuestions();
+  if (state.user.must_change_pw) openPwDialog(true);
+}
+
+$('#login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target, btn = $('button[type=submit]', f);
+  $('#login-error').textContent = '';
+  btn.disabled = true;
+  try {
+    const data = await api('POST', '/api/login', { username: f.username.value.trim(), password: f.password.value });
+    f.password.value = '';
+    onLogin(data);
+  } catch (err) {
+    $('#login-error').textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#logout-btn').addEventListener('click', async () => {
+  try { await api('POST', '/api/logout', {}); } catch {}
+  state.user = null;
+  showLogin();
+});
+
+// ------------------------------------------------------------ 视图切换
+function switchView(view) {
+  state.view = view;
+  $('#chat-view').classList.toggle('hidden', view !== 'chat');
+  $('#admin-view').classList.toggle('hidden', view !== 'admin');
+  $$('.nav [data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  if (view === 'admin') loadUsers();
+  if (view === 'chat') { scrollChatToBottom(); $('#q-input').focus(); }
+}
+$$('.nav [data-view]').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
+
+// ------------------------------------------------------------ 会话
+const pendingQuestion = () => state.questions.find(q => q.status === 'pending');
+
+async function loadQuestions() {
+  try {
+    const data = await api('GET', '/api/questions');
+    state.questions = data.questions;
+    renderChat();
+    scrollChatToBottom();
+    pollLoop();
+  } catch (e) {
+    if (e.status !== 401) toast(e.message, 'error');
+  }
+}
+
+function scrollChatToBottom() {
+  const el = $('#chat-scroll');
+  requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+}
+
+function answerHtml(q) {
+  if (q.status === 'pending') {
+    return `<div class="card">
+      <div class="waiting"><span class="dots"><i></i><i></i><i></i></span>等待回答…</div>
+      <div class="watch">正在监控 <code>${esc(q.md_path)}</code>，出现“回答完毕”后自动返回</div>
+      ${q.file_exists === false ? '<div class="warn-line">⚠ 文件不存在，可能被移动或删除了</div>' : ''}
+      <div class="card-foot"><span class="grow">${esc(q.created_at)}</span><button class="btn link" data-cancel="${q.id}">取消等待</button></div>
+    </div>`;
+  }
+  if (q.status === 'cancelled') {
+    return `<div class="card cancelled">已取消等待（${esc(q.md_name)}）</div>`;
+  }
+  const body = q.answer ? renderMd(q.answer) : '<span class="muted">（回答为空）</span>';
+  return `<div class="card">
+    <div class="md">${body}</div>
+    <div class="card-foot"><span class="grow">${esc(q.md_name)} · ${esc(q.answered_at || '')}</span><button class="btn link" data-copy="${q.id}">复制</button></div>
+  </div>`;
+}
+
+function renderChat() {
+  const list = $('#chat-list');
+  if (!state.questions.length) {
+    const dir = state.user ? state.user.md_dir : '';
+    list.innerHTML = `<div class="empty"><div class="big">还没有提问</div>
+      <div>在下面输入你的第一个问题，它会保存为 <code>${esc(dir)}</code> 下的下一个编号 md</div></div>`;
+  } else {
+    list.innerHTML = state.questions.map(q => `
+      <div class="turn" data-id="${q.id}">
+        <div class="msg-me">
+          <div class="bubble">${esc(q.question)}</div>
+          <div class="meta">${esc(q.md_name)} · ${esc(q.created_at)}</div>
+        </div>
+        <div class="msg-bot">${answerHtml(q)}</div>
+      </div>`).join('');
+  }
+  updateComposer();
+}
+
+function updateComposer() {
+  const p = pendingQuestion();
+  const hint = $('#composer-hint');
+  $('#send-btn').disabled = !!p;
+  if (p) {
+    hint.className = 'composer-hint waiting-hint';
+    hint.textContent = `正在等待 ${p.md_name} 回答完毕，之后才能继续提问（可以先输入下一个问题）`;
+  } else {
+    hint.className = 'composer-hint';
+    hint.textContent = state.user ? `问题会保存到：${state.user.md_dir}` : '';
+  }
+}
+
+async function sendQuestion() {
+  const input = $('#q-input');
+  const text = input.value.trim();
+  if (!text) return;
+  if (pendingQuestion()) { toast('上一个问题还在等待回答', 'error'); return; }
+  const btn = $('#send-btn');
+  btn.disabled = true;
+  try {
+    const data = await api('POST', '/api/questions', { question: text });
+    state.questions.push(data.question);
+    input.value = '';
+    autosize();
+    renderChat();
+    scrollChatToBottom();
+    pollLoop();
+  } catch (e) {
+    toast(e.message, 'error');
+    if (e.status === 409) loadQuestions();
+  } finally {
+    updateComposer();
+  }
+}
+
+// 长轮询：服务器在回答完毕时立刻返回，否则最多挂 25 秒
+let polling = false;
+async function pollLoop() {
+  if (polling) return;
+  polling = true;
+  try {
+    while (state.user) {
+      const p = pendingQuestion();
+      if (!p) break;
+      let data;
+      try {
+        data = await api('GET', `/api/questions/${p.id}?wait=25`);
+      } catch (e) {
+        if (e.status === 401) break;
+        if (e.status === 404) { await loadQuestions(); break; }
+        await sleep(3000);
+        continue;
+      }
+      const idx = state.questions.findIndex(q => q.id === data.question.id);
+      if (idx < 0 || state.questions[idx].status !== 'pending') continue;  // 期间已取消
+      const nearBottom = isNearBottom();
+      state.questions[idx] = data.question;
+      renderChat();
+      if (data.question.status === 'answered') {
+        toast(`${data.question.md_name} 已回答完毕`, 'ok');
+        if (document.hidden) document.title = '（新回答）' + baseTitle;
+        if (nearBottom) scrollChatToBottom();
+      }
+    }
+  } finally {
+    polling = false;
+  }
+}
+function isNearBottom() {
+  const el = $('#chat-scroll');
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) document.title = baseTitle; });
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+}
+
+$('#chat-list').addEventListener('click', async e => {
+  const copyBtn = e.target.closest('[data-copy]');
+  if (copyBtn) {
+    const q = state.questions.find(x => x.id === +copyBtn.dataset.copy);
+    if (q) { await copyText(q.answer || ''); toast('已复制回答'); }
+    return;
+  }
+  const cancelBtn = e.target.closest('[data-cancel]');
+  if (cancelBtn) {
+    if (!confirm('取消等待这个问题？md 文件会保留，但之后写入的回答不会再返回。')) return;
+    try {
+      const data = await api('POST', `/api/questions/${cancelBtn.dataset.cancel}/cancel`, {});
+      const idx = state.questions.findIndex(q => q.id === data.question.id);
+      if (idx >= 0) state.questions[idx] = data.question;
+      renderChat();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+});
+
+const qInput = $('#q-input');
+function autosize() {
+  qInput.style.height = 'auto';
+  qInput.style.height = Math.min(qInput.scrollHeight, 220) + 'px';
+}
+qInput.addEventListener('input', autosize);
+qInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendQuestion(); }
+});
+$('#send-btn').addEventListener('click', sendQuestion);
+
+// ------------------------------------------------------------ 用户管理
+async function loadUsers() {
+  try {
+    const data = await api('GET', '/api/admin/users');
+    state.users = data.users;
+    renderUsers();
+  } catch (e) {
+    if (e.status !== 401) toast(e.message, 'error');
+  }
+}
+
+function renderUsers() {
+  $('#user-tbody').innerHTML = state.users.map(u => {
+    const me = u.id === state.user.id;
+    return `<tr>
+      <td><b>${esc(u.username)}</b>${me ? ' <span class="tag">我</span>' : ''}</td>
+      <td><span class="tag ${u.role === 'admin' ? 'admin' : ''}">${u.role === 'admin' ? '管理员' : '普通用户'}</span></td>
+      <td class="dir mono" title="${esc(u.md_dir)}">${esc(u.md_dir)}</td>
+      <td>${u.q_total}${u.q_pending ? ` <span class="tag warn">${u.q_pending} 待回答</span>` : ''}</td>
+      <td>${u.enabled ? '<span class="tag ok">启用</span>' : '<span class="tag off">禁用</span>'}</td>
+      <td class="muted">${esc(u.created_at)}</td>
+      <td class="ops"><button class="btn small" data-edit="${u.id}">编辑</button>${me ? '' : `<button class="btn small danger" data-del="${u.id}">删除</button>`}</td>
+    </tr>`;
+  }).join('');
+}
+
+let editingUserId = null;
+function openUserDialog(user) {
+  editingUserId = user ? user.id : null;
+  const f = $('#user-form');
+  f.reset();
+  $('#user-error').textContent = '';
+  $('#user-dialog-title').textContent = user ? `编辑用户：${user.username}` : '新建用户';
+  f.username.value = user ? user.username : '';
+  f.username.readOnly = !!user;
+  f.password.value = '';
+  f.password.required = !user;
+  f.password.placeholder = user ? '留空则不修改' : '至少 6 位';
+  $('#user-pw-label').textContent = user ? '重置密码' : '密码';
+  f.elements.role.value = user ? user.role : 'user';
+  f.md_dir.value = user ? user.md_dir : state.defaultDir;
+  f.enabled.checked = user ? user.enabled : true;
+  const self = user && user.id === state.user.id;
+  f.elements.role.disabled = self;      // 不能改自己的角色
+  f.enabled.disabled = self;   // 不能禁用自己
+  $('#user-dialog').showModal();
+  (user ? f.md_dir : f.username).focus();
+}
+
+$('#add-user-btn').addEventListener('click', () => openUserDialog(null));
+$('#reload-users-btn').addEventListener('click', loadUsers);
+
+$('#user-tbody').addEventListener('click', async e => {
+  const editBtn = e.target.closest('[data-edit]');
+  if (editBtn) { openUserDialog(state.users.find(u => u.id === +editBtn.dataset.edit)); return; }
+  const delBtn = e.target.closest('[data-del]');
+  if (delBtn) {
+    const u = state.users.find(x => x.id === +delBtn.dataset.del);
+    if (!u || !confirm(`确定删除用户「${u.username}」？\n他的问答记录会一起删除（md 文件保留）。`)) return;
+    try {
+      await api('DELETE', `/api/admin/users/${u.id}`);
+      toast('已删除');
+      loadUsers();
+    } catch (err) { toast(err.message, 'error'); }
+  }
+});
+
+$('#user-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target;
+  const payload = { md_dir: f.md_dir.value.trim() };
+  if (!f.elements.role.disabled) payload.role = f.elements.role.value;
+  if (!f.enabled.disabled) payload.enabled = f.enabled.checked;
+  if (f.password.value) payload.password = f.password.value;
+  $('#user-error').textContent = '';
+  try {
+    if (editingUserId) {
+      const data = await api('PUT', `/api/admin/users/${editingUserId}`, payload);
+      if (data.user.id === state.user.id) { state.user = { ...state.user, ...data.user }; updateComposer(); }
+      toast('已保存', 'ok');
+    } else {
+      payload.username = f.username.value.trim();
+      await api('POST', '/api/admin/users', payload);
+      toast('用户已创建', 'ok');
+    }
+    $('#user-dialog').close();
+    loadUsers();
+  } catch (err) {
+    $('#user-error').textContent = err.message;
+  }
+});
+
+// ------------------------------------------------------------ 修改密码
+let pwForced = false;
+function openPwDialog(force = false) {
+  pwForced = force;
+  const f = $('#pw-form');
+  f.reset();
+  $('#pw-error').textContent = '';
+  $('#pw-force-note').classList.toggle('hidden', !force);
+  $('#pw-cancel').classList.toggle('hidden', force);
+  $('#pw-dialog').showModal();
+  f.old_password.focus();
+}
+$('#pw-btn').addEventListener('click', () => openPwDialog(false));
+$('#pw-dialog').addEventListener('cancel', e => { if (pwForced) e.preventDefault(); });
+
+$('#pw-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = e.target;
+  if (f.new_password.value !== f.confirm.value) { $('#pw-error').textContent = '两次输入的新密码不一致'; return; }
+  try {
+    await api('POST', '/api/me/password', { old_password: f.old_password.value, new_password: f.new_password.value });
+    state.user.must_change_pw = false;
+    pwForced = false;
+    $('#pw-dialog').close();
+    toast('密码已修改', 'ok');
+  } catch (err) {
+    $('#pw-error').textContent = err.message;
+  }
+});
+
+$$('dialog [data-close]').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
+
+// ------------------------------------------------------------ 启动
+(async () => {
+  try { onLogin(await api('GET', '/api/me')); }
+  catch { showLogin(); }
+})();
+</script>
+</body>
+</html>
