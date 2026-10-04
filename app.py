@@ -10,8 +10,8 @@
          回答：
 
   3. 回答方（人工或其他程序）在 “回答：” 下面写回答，写完后加上 “回答完毕”
-  4. 后台线程监控每个用户编号最大的那个待回答 md，一旦出现 “回答完毕”，
-     就把 “回答：” 和 “回答完毕” 之间的内容作为结果返回给这个用户
+  4. 后台线程监听待回答 md 所在的目录（Windows 下用目录变化通知，其他系统每秒轮询），一旦出现 “回答完毕”，
+     就把 “回答：” 和 “回答完毕” 之间的内容立即返回给正在等待的这个用户
 
 运行：python app.py
       默认地址 http://127.0.0.1:8000，首次启动自动创建管理员 admin / admin123
@@ -43,8 +43,9 @@ CONFIG = {
 }
 
 DONE_MARK = "回答完毕"
-POLL_INTERVAL = 1.0          # 监控 md 的间隔（秒）
-SETTLE_SECONDS = 1.0         # md 最后一次修改后至少静止这么久才读取，避免读到写了一半的文件
+POLL_INTERVAL = 1.0          # 系统不支持目录变化通知时，轮询 md 的间隔（秒）
+RESCAN_INTERVAL = 5.0        # 有目录变化通知时的兜底复查间隔（秒），防止漏掉通知
+SETTLE_SECONDS = 0.5         # md 最后一次修改后至少静止这么久才读取，避免读到写了一半的文件
 SESSION_TTL = 7 * 24 * 3600  # 登录有效期（秒）
 MAX_WAIT = 60                # 接口长轮询最长等待（秒）
 MAX_QUESTION_LEN = 20000
@@ -222,12 +223,131 @@ def extract_answer(text, question):
     return body.strip()
 
 
+# ---------------------------------------------------------------- 目录变化通知
+
+class PollWatcher:
+    """系统不支持目录变化通知时的退路：按超时睡眠，wake() 可以提前叫醒"""
+    native = False
+
+    def __init__(self):
+        self._event = threading.Event()
+
+    def wake(self):
+        self._event.set()
+
+    def wait(self, dirs, timeout):
+        if self._event.wait(timeout):
+            self._event.clear()
+
+
+class WinDirWatcher:
+    """Windows 目录变化通知：md 所在目录里有文件新建、写入、改名时，wait() 立即返回"""
+    native = True
+    # FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE
+    NOTIFY_FILTER = 0x01 | 0x08 | 0x10
+    MAX_DIRS = 63  # WaitForMultipleObjects 最多等 64 个句柄，留一个给 wake 事件
+    WAIT_FAILED = 0xFFFFFFFF
+
+    def __init__(self):
+        import ctypes
+        from ctypes import wintypes
+
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        H, B, D = wintypes.HANDLE, wintypes.BOOL, wintypes.DWORD
+        for name, argtypes, restype in [
+            ("FindFirstChangeNotificationW", [wintypes.LPCWSTR, B, D], H),
+            ("FindNextChangeNotification", [H], B),
+            ("FindCloseChangeNotification", [H], B),
+            ("CreateEventW", [wintypes.LPVOID, B, B, wintypes.LPCWSTR], H),
+            ("SetEvent", [H], B),
+            ("WaitForMultipleObjects", [D, ctypes.POINTER(H), B, D], D),
+        ]:
+            fn = getattr(k, name)
+            fn.argtypes, fn.restype = argtypes, restype
+        self._ctypes = ctypes
+        self._k = k
+        self._HANDLE = H
+        self._invalid = ctypes.c_void_p(-1).value  # INVALID_HANDLE_VALUE
+        self._wake = k.CreateEventW(None, False, False, None)  # 自动复位事件
+        if not self._wake:
+            raise ctypes.WinError(ctypes.get_last_error())
+        self._handles = {}    # 规范化后的目录 -> 通知句柄
+        self._failed = set()  # 打不开的目录，只记一次日志
+
+    def wake(self):
+        self._k.SetEvent(self._wake)
+
+    def _sync(self, dirs):
+        """让监听的目录和 dirs 保持一致：多的关掉，少的补上"""
+        want = {}
+        for d in dirs:
+            want.setdefault(os.path.normcase(os.path.abspath(d)), d)
+        for key in list(self._handles):
+            if key not in want:
+                self._k.FindCloseChangeNotification(self._handles.pop(key))
+        for key, d in want.items():
+            if key in self._handles:
+                continue
+            if len(self._handles) >= self.MAX_DIRS:
+                break  # 超出的目录靠兜底复查
+            h = self._k.FindFirstChangeNotificationW(d, False, self.NOTIFY_FILTER)
+            if not h or h == self._invalid:
+                if key not in self._failed:
+                    self._failed.add(key)
+                    log(f"无法监听目录 {d}（错误码 {self._ctypes.get_last_error()}），"
+                        f"该目录改为每 {RESCAN_INTERVAL:g} 秒复查一次")
+                continue
+            self._failed.discard(key)
+            self._handles[key] = h
+
+    def wait(self, dirs, timeout):
+        self._sync(dirs)
+        keys = list(self._handles)
+        arr = (self._HANDLE * (len(keys) + 1))(self._wake, *(self._handles[k] for k in keys))
+        r = self._k.WaitForMultipleObjects(len(keys) + 1, arr, False, max(0, int(timeout * 1000)))
+        if 1 <= r <= len(keys):
+            key = keys[r - 1]
+            # 每次收到通知后要重新挂上；挂不上（比如目录被删了）就关掉，下一轮 _sync 再重新打开
+            if not self._k.FindNextChangeNotification(self._handles[key]):
+                self._k.FindCloseChangeNotification(self._handles.pop(key))
+        elif r == self.WAIT_FAILED:
+            raise self._ctypes.WinError(self._ctypes.get_last_error())
+
+
+def create_dir_watcher():
+    if os.name == "nt":
+        try:
+            return WinDirWatcher()
+        except Exception as e:
+            log(f"目录变化通知不可用（{e}），改为每 {POLL_INTERVAL:g} 秒轮询")
+    return PollWatcher()
+
+
 # ---------------------------------------------------------------- 监控线程
 
 _seen = {}  # 问题 id -> (mtime_ns, size)：文件没变化就不重复读
+_watcher = None  # start_monitor() 里创建
+
+# 问题状态（回答完毕 / 取消）每变一次加 1，正在长轮询等待的请求据此立即返回
+_status_cond = threading.Condition()
+_status_version = 0
+
+
+def notify_status_change():
+    global _status_version
+    with _status_cond:
+        _status_version += 1
+        _status_cond.notify_all()
+
+
+def wake_monitor():
+    """有新问题时叫醒监控线程，让它马上开始监听新问题所在的目录"""
+    if _watcher:
+        _watcher.wake()
 
 
 def check_pending_once():
+    """检查所有待回答的 md。返回 (这些 md 所在的目录, 还在写的文件最多再等几秒才算静止；没有则为 None)"""
     # 每个用户同一时间只允许一个待回答问题，所以这里的每一条就是该用户编号最大的 md
     with db() as c:
         rows = c.execute(
@@ -236,8 +356,12 @@ def check_pending_once():
         ).fetchall()
 
     alive = set()
+    dirs = set()
+    settle_wait = None
+    answered = False
     for r in rows:
         alive.add(r["id"])
+        dirs.add(os.path.dirname(r["md_path"]))
         try:
             st = os.stat(r["md_path"])
         except OSError:
@@ -245,8 +369,12 @@ def check_pending_once():
         sig = (st.st_mtime_ns, st.st_size)
         if _seen.get(r["id"]) == sig:
             continue
-        if time.time() - st.st_mtime < SETTLE_SECONDS:
-            continue  # 回答方可能还在写，下一轮再看
+        quiet = time.time() - st.st_mtime
+        if quiet < SETTLE_SECONDS:
+            # 回答方可能还在写，等静止够了再看
+            remain = min(SETTLE_SECONDS - quiet, SETTLE_SECONDS)
+            settle_wait = remain if settle_wait is None else min(settle_wait, remain)
+            continue
         try:
             text = read_md(r["md_path"])
         except OSError:
@@ -261,21 +389,42 @@ def check_pending_once():
                 "WHERE id = ? AND status = 'pending'",
                 (answer, now_str(), r["id"]),
             )
+        answered = True
         log(f"{r['username']} 的 {r['md_no']}.md 已回答完毕（{len(answer)} 字）")
 
     for qid in list(_seen):
         if qid not in alive:
             del _seen[qid]
+    if answered:
+        notify_status_change()
+    return dirs, settle_wait
 
 
-def monitor_loop():
-    log(f"开始监控 md（每 {POLL_INTERVAL:g} 秒检查一次，出现“{DONE_MARK}”即返回结果）")
+def monitor_loop(watcher):
+    if watcher.native:
+        idle = RESCAN_INTERVAL
+        log(f"开始监控 md（监听目录变化，出现“{DONE_MARK}”立即返回结果；另每 {idle:g} 秒兜底复查一次）")
+    else:
+        idle = POLL_INTERVAL
+        log(f"开始监控 md（每 {idle:g} 秒检查一次，出现“{DONE_MARK}”即返回结果）")
     while True:
+        dirs, settle_wait = set(), None
         try:
-            check_pending_once()
+            dirs, settle_wait = check_pending_once()
         except Exception:
             traceback.print_exc()
-        time.sleep(POLL_INTERVAL)
+        timeout = idle if settle_wait is None else min(idle, settle_wait + 0.05)
+        try:
+            watcher.wait(dirs, timeout)
+        except Exception:
+            traceback.print_exc()
+            time.sleep(POLL_INTERVAL)
+
+
+def start_monitor():
+    global _watcher
+    _watcher = create_dir_watcher()
+    threading.Thread(target=monitor_loop, args=(_watcher,), name="md-monitor", daemon=True).start()
 
 
 # ---------------------------------------------------------------- 工具函数
@@ -438,6 +587,7 @@ def api_ask(h, user):
                 (user["id"], no, path, question, now_str()),
             )
             row = c.execute("SELECT * FROM questions WHERE id = ?", (cur.lastrowid,)).fetchone()
+    wake_monitor()
     log(f"{user['username']} 提问 -> {path}")
     return {"question": public_question(row)}
 
@@ -451,14 +601,18 @@ def api_get_question(h, user, qid):
         wait = 0
     deadline = time.time() + wait
     while True:
+        version = _status_version  # 先记下再查库，查库期间状态变了也不会漏掉
         with db() as c:
             row = c.execute("SELECT * FROM questions WHERE id = ? AND user_id = ?",
                             (int(qid), user["id"])).fetchone()
         if not row:
             raise ApiError(404, "问题不存在")
-        if row["status"] != "pending" or time.time() >= deadline:
+        remaining = deadline - time.time()
+        if row["status"] != "pending" or remaining <= 0:
             return {"question": public_question(row)}
-        time.sleep(0.5)
+        # 回答完毕或取消时监控线程会通知，立即醒来；最多等 5 秒再查一次库兜底
+        with _status_cond:
+            _status_cond.wait_for(lambda: _status_version != version, min(remaining, 5))
 
 
 @route("POST", r"/api/questions/(\d+)/cancel")
@@ -469,6 +623,7 @@ def api_cancel_question(h, user, qid):
         row = c.execute("SELECT * FROM questions WHERE id = ? AND user_id = ?", (int(qid), user["id"])).fetchone()
     if not row:
         raise ApiError(404, "问题不存在")
+    notify_status_change()
     return {"question": public_question(row)}
 
 
@@ -689,7 +844,7 @@ def main():
     CONFIG["db_path"] = os.path.abspath(args.db)
     CONFIG["default_md_dir"] = os.path.normpath(args.default_dir)
     init_db(args.admin_password)
-    threading.Thread(target=monitor_loop, name="md-monitor", daemon=True).start()
+    start_monitor()
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
